@@ -111,9 +111,38 @@ export async function loadEnvironmentVariables(): Promise<void> {
  */
 async function initializeEnvVariablesTable(): Promise<void> {
   try {
-    // テーブルが存在しない場合の初期化処理
-    // 注: テーブル作成はSupabaseコンソールで行うため、
-    // ここでは初期データの同期のみを実行
+    console.log('環境変数テーブルの初期化を実行中...');
+    
+    // テーブルが存在するか確認
+    const { error: checkError } = await supabase.rpc('check_table_exists', { table_name: 'env_variables' });
+    
+    if (checkError) {
+      console.log('テーブル存在確認に失敗しました、テーブルを作成します:', checkError.message);
+      
+      // テーブルを作成するSQL
+      const createTableSQL = `
+        CREATE TABLE IF NOT EXISTS env_variables (
+          id SERIAL PRIMARY KEY,
+          key TEXT NOT NULL UNIQUE,
+          value TEXT NOT NULL,
+          description TEXT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
+      
+      // SQLを実行
+      const { error: createError } = await supabase.rpc('execute_sql', { sql: createTableSQL });
+      
+      if (createError) {
+        console.error('テーブル作成に失敗しました:', createError.message);
+        return;
+      }
+      
+      console.log('env_variablesテーブルを作成しました');
+    }
+    
+    // 初期データの同期
     await syncEnvVariablesToDatabase();
   } catch (error) {
     console.error('環境変数テーブルの初期化中にエラーが発生:', error);
@@ -173,10 +202,145 @@ export async function syncEnvVariablesToDatabase(): Promise<void> {
 }
 
 /**
+ * 設定値を環境変数として追加/更新する
+ * @param key キー
+ * @param value 値
+ * @param description 説明（オプション）
+ * @returns 更新成功の可否
+ */
+export async function setEnvVariable(key: string, value: string, description?: string): Promise<boolean> {
+  try {
+    console.log(`環境変数を設定: ${key}`);
+    
+    // プロセス環境変数を更新
+    process.env[key] = value;
+    
+    // データベースも更新
+    const { error } = await supabase
+      .from('env_variables')
+      .upsert({
+        key,
+        value,
+        description,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'key'
+      });
+    
+    if (error) {
+      console.error(`環境変数 ${key} の設定中にエラーが発生:`, error);
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`環境変数 ${key} の設定中に例外が発生:`, error);
+    return false;
+  }
+}
+
+/**
+ * 環境変数を削除する
+ * @param key 削除する環境変数のキー
+ * @returns 削除成功の可否
+ */
+export async function deleteEnvVariable(key: string): Promise<boolean> {
+  try {
+    console.log(`環境変数を削除: ${key}`);
+    
+    // プロセス環境変数から削除
+    delete process.env[key];
+    
+    // データベースからも削除
+    const { error } = await supabase
+      .from('env_variables')
+      .delete()
+      .eq('key', key);
+    
+    if (error) {
+      console.error(`環境変数 ${key} の削除中にエラーが発生:`, error);
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`環境変数 ${key} の削除中に例外が発生:`, error);
+    return false;
+  }
+}
+
+/**
+ * すべての環境変数を取得する
+ * @param includeSecrets 機密情報を含むかどうか
+ * @returns 環境変数の配列
+ */
+export async function getAllEnvVariables(includeSecrets = false): Promise<any[]> {
+  try {
+    // データベースから全ての環境変数を取得
+    const { data, error } = await supabase
+      .from('env_variables')
+      .select('key, value, description, updated_at');
+    
+    if (error) {
+      console.error('環境変数の取得中にエラーが発生:', error);
+      return [];
+    }
+    
+    // 機密情報を除外するかどうか
+    if (!includeSecrets) {
+      const secretKeys = ['DISCORD_TOKEN', 'GEMINI_API_KEY', 'OPENAI_API_KEY', 'BRAVE_API_KEY', 'SUPABASE_ANON_KEY'];
+      
+      return data.map(env => {
+        if (secretKeys.includes(env.key)) {
+          return {
+            ...env,
+            value: '[HIDDEN]'
+          };
+        }
+        return env;
+      });
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('環境変数リストの取得中に例外が発生:', error);
+    return [];
+  }
+}
+
+/**
  * ボットステータスを更新
  */
 async function updateBotStatus(): Promise<void> {
   try {
+    // ボットステータステーブルが存在するか確認
+    const { error: checkError } = await supabase.rpc('check_table_exists', { table_name: 'bot_status' });
+    
+    if (checkError) {
+      console.log('bot_statusテーブルが存在しないため、作成します');
+      
+      // テーブルを作成するSQL
+      const createTableSQL = `
+        CREATE TABLE IF NOT EXISTS bot_status (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          message TEXT,
+          last_restart TIMESTAMP WITH TIME ZONE,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
+      
+      // SQLを実行
+      const { error: createError } = await supabase.rpc('execute_sql', { sql: createTableSQL });
+      
+      if (createError) {
+        console.error('bot_statusテーブル作成に失敗しました:', createError.message);
+        return;
+      }
+      
+      console.log('bot_statusテーブルを作成しました');
+    }
+    
     // ボットのステータスを更新
     const { error } = await supabase
       .from('bot_status')
@@ -221,5 +385,8 @@ async function getStatusId(): Promise<string> {
 export default {
   getEnvVariable,
   loadEnvironmentVariables,
-  syncEnvVariablesToDatabase
+  syncEnvVariablesToDatabase,
+  setEnvVariable,
+  deleteEnvVariable,
+  getAllEnvVariables
 };
