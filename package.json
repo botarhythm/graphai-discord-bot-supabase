@@ -14,10 +14,12 @@
     "dev": "npx tsc --watch & node --watch dist/index.js",
     "lint": "eslint . --ext .ts",
     "prepare": "npm run build",
+    "postinstall": "node dist/scripts/create-directories.js",
     "diagnose": "npx tsc fix-bot.ts && node fix-bot.js",
     "start:fixed": "npx tsc && node dist/index-fix.js",
     "backup": "node dist/scripts/backup.js",
-    "restore": "node dist/scripts/restore.js"
+    "restore": "node dist/scripts/restore.js",
+    "setup-dirs": "node dist/scripts/create-directories.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.2.1",
