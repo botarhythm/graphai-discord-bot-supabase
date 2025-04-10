@@ -16,6 +16,9 @@ import envLoader from './services/env-loader';
 import LogService from './services/log-service';
 import BackupService from './services/backup-service';
 
+// APIサーバー
+import { startServer } from './api/server';
+
 // グローバルにBlobを設定
 (globalThis as any).Blob = Blob;
 
@@ -61,6 +64,13 @@ async function main() {
       nodeVersion: process.version,
       platform: process.platform
     });
+    
+    // APIサーバーの起動
+    try {
+      await startServer();
+    } catch (apiError) {
+      await LogService.error('system', 'APIサーバーの起動に失敗しました', apiError);
+    }
     
     // Discordクライアントの設定
     const client = new Client({
