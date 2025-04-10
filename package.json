@@ -13,7 +13,9 @@
     "build": "npx tsc",
     "dev": "npx tsc --watch & node --watch dist/index.js",
     "lint": "eslint . --ext .ts",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "diagnose": "npx tsc fix-bot.ts && node fix-bot.js",
+    "start:fixed": "npx tsc && node dist/index-fix.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.2.1",
