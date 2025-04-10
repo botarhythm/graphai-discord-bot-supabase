@@ -51,11 +51,25 @@ export async function loadEnvironmentVariables(): Promise<void> {
       'DISCORD_TOKEN',
       'DISCORD_CLIENT_ID',
       'GEMINI_API_KEY',
+      'OPENAI_API_KEY',
+      'RECRAFT_API_KEY',
       'BRAVE_API_KEY',
       'PREFIX',
       'GUILD_ID',
       'ALLOW_ALL_SERVERS'
     ];
+    
+    // データベースにenv_variablesテーブルが存在するか確認
+    const { error: tableError } = await supabase
+      .from('env_variables')
+      .select('key')
+      .limit(1);
+      
+    if (tableError) {
+      console.warn('env_variablesテーブルが存在しないか、アクセスできません:', tableError.message);
+      console.log('env_variablesテーブルを作成します...');
+      await initializeEnvVariablesTable();
+    }
     
     // 一括でデータベースから取得
     const { data, error } = await supabase
@@ -80,10 +94,91 @@ export async function loadEnvironmentVariables(): Promise<void> {
       console.log(`${data.length}個の環境変数を設定しました`);
     } else {
       console.log('データベースから読み込める環境変数がありませんでした');
+      // 初期環境変数をデータベースに保存
+      await syncEnvVariablesToDatabase();
     }
     
     // ボットのステータスを更新
-    await supabase
+    await updateBotStatus();
+    
+  } catch (error) {
+    console.error('環境変数のロード中にエラーが発生:', error);
+  }
+}
+
+/**
+ * 環境変数テーブルの初期化
+ */
+async function initializeEnvVariablesTable(): Promise<void> {
+  try {
+    // テーブルが存在しない場合の初期化処理
+    // 注: テーブル作成はSupabaseコンソールで行うため、
+    // ここでは初期データの同期のみを実行
+    await syncEnvVariablesToDatabase();
+  } catch (error) {
+    console.error('環境変数テーブルの初期化中にエラーが発生:', error);
+  }
+}
+
+/**
+ * 環境変数をプロセスからデータベースに同期
+ */
+export async function syncEnvVariablesToDatabase(): Promise<void> {
+  try {
+    console.log('環境変数をデータベースに同期中...');
+    
+    // 重要な環境変数のリスト
+    const importantEnvKeys = [
+      'DISCORD_TOKEN',
+      'DISCORD_CLIENT_ID', 
+      'GEMINI_API_KEY',
+      'BRAVE_API_KEY',
+      'PREFIX',
+      'GUILD_ID',
+      'ALLOW_ALL_SERVERS',
+      'OPENAI_API_KEY',
+      'RECRAFT_API_KEY'
+    ];
+    
+    // プロセス環境変数からデータ取得
+    const envData = importantEnvKeys
+      .filter(key => process.env[key])
+      .map(key => ({
+        key,
+        value: process.env[key] || '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }));
+    
+    if (envData.length === 0) {
+      console.log('保存する環境変数が見つかりませんでした');
+      return;
+    }
+    
+    // 一括更新
+    const { error } = await supabase
+      .from('env_variables')
+      .upsert(envData, {
+        onConflict: 'key'
+      });
+    
+    if (error) {
+      console.error('環境変数の同期中にエラーが発生:', error);
+    } else {
+      console.log(`${envData.length}個の環境変数をデータベースに同期しました`);
+    }
+  } catch (error) {
+    console.error('環境変数の同期中に例外が発生:', error);
+  }
+}
+
+/**
+ * ボットステータスを更新
+ */
+async function updateBotStatus(): Promise<void> {
+  try {
+    // ボットのステータスを更新
+    const { error } = await supabase
       .from('bot_status')
       .upsert({
         id: await getStatusId(),
@@ -92,9 +187,12 @@ export async function loadEnvironmentVariables(): Promise<void> {
         last_restart: new Date().toISOString(),
         updated_at: new Date().toISOString()
       });
-    
+      
+    if (error) {
+      console.warn('ボットステータスの更新中にエラーが発生:', error);
+    }
   } catch (error) {
-    console.error('環境変数のロード中にエラーが発生:', error);
+    console.error('ボットステータスの更新中に例外が発生:', error);
   }
 }
 
@@ -102,16 +200,26 @@ export async function loadEnvironmentVariables(): Promise<void> {
  * ステータスIDを取得（ない場合は作成）
  */
 async function getStatusId(): Promise<string> {
-  const { data } = await supabase
-    .from('bot_status')
-    .select('id')
-    .limit(1)
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from('bot_status')
+      .select('id')
+      .limit(1)
+      .single();
+      
+    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+      console.warn('ボットステータスIDの取得中にエラーが発生:', error);
+    }
     
-  return data?.id || 'new-status';
+    return data?.id || 'default-status';
+  } catch (error) {
+    console.error('ステータスID取得中に例外が発生:', error);
+    return 'default-status';
+  }
 }
 
 export default {
   getEnvVariable,
-  loadEnvironmentVariables
+  loadEnvironmentVariables,
+  syncEnvVariablesToDatabase
 };
