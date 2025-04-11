@@ -26,7 +26,7 @@ import { startServer } from './api/server';
 dotenv.config();
 
 // アプリケーションバージョン
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 
 // メイン関数
 async function main() {
@@ -77,6 +77,7 @@ async function main() {
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageTyping,  // サーバー内でのタイピングインジケータ検出を追加
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.DirectMessageTyping,
@@ -127,14 +128,24 @@ async function main() {
       // ボット自身のメッセージは無視
       if (message.author.bot) return;
 
-      // 以下の条件以外は処理しない
-      // 1. ボットがメンションされた場合
-      // 2. DMの場合
-      // 3. ボットが起点のスレッド内のメッセージ
+      // チャンネルタイプを正確に確認
+      const channelType = message.channel.type;
+      const isDM = channelType === ChannelType.DM;
+      
+      // メンション検出ロジックの強化
       const botId = client.user?.id;
-      const botMentionRegex = new RegExp(`<@!?${botId}>`, 'i');
-      const isMentioned = botId && botMentionRegex.test(message.content);
-      const isDM = !message.guild;
+      let isMentioned = false;
+      
+      if (botId) {
+        // 通常のメンション構文チェック
+        const mentionRegex = new RegExp(`<@!?${botId}>`, 'i');
+        isMentioned = mentionRegex.test(message.content);
+        
+        // メッセージのメンション配列も確認
+        if (!isMentioned && message.mentions.users.size > 0) {
+          isMentioned = message.mentions.users.has(botId);
+        }
+      }
       
       // スレッド関連の確認（スレッドが存在し、親がボットか）
       let isThreadReply = false;
@@ -152,7 +163,7 @@ async function main() {
       // 詳細なログ出力（デバッグモード時のみ）
       if (process.env.DEBUG_MODE === 'true') {
         console.log(`Message received: "${message.content}" from ${message.author.tag} in ${message.guild ? message.guild.name : 'DM'}`);
-        console.log(`Channel type: ${message.channel.type}`);
+        console.log(`Channel type: ${channelType}`);
         console.log(`Check conditions: isMentioned=${isMentioned}, isDM=${isDM}, isThreadReply=${isThreadReply}`);
       }
 
@@ -168,7 +179,7 @@ async function main() {
       await LogService.info('user', 'メッセージを受信しました', {
         userId: message.author.id,
         username: message.author.username,
-        channelType: message.channel.type,
+        channelType: channelType,
         guildName: message.guild?.name || 'DM',
         contentLength: message.content.length,
         hasAttachments: message.attachments.size > 0
@@ -244,7 +255,7 @@ async function main() {
               .catch(async (err) => {
                 await LogService.error('discord', 'メッセージ返信中にエラーが発生', err);
                 // DMの場合は別のアプローチを試す
-                if (!message.guild) {
+                if (isDM) {
                   await LogService.debug('discord', 'DMへの代替送信を試みます');
                   message.author.send(response.toString())
                     .then(() => LogService.debug('discord', 'DMを送信しました'))
@@ -316,6 +327,10 @@ async function main() {
       // 各種情報を表示
       console.log(`ㅤサーバー数: ${client.guilds.cache.size}`);
       console.log(`ㅤBot User ID: ${client.user?.id}`);
+      console.log(`ㅤインテント: ${Array.from(Object.entries(GatewayIntentBits)
+          .filter(([_, value]) => client.options.intents.has(value as number))
+          .map(([key]) => key)
+          .join(', ')}`);
       console.log(`ㅤSupabase URL: ${process.env.SUPABASE_URL?.slice(0, 20)}...`);
       console.log(`ㅤNode.js: ${process.version}`);
       console.log(`ㅤDiscord.js: v14\n`);
